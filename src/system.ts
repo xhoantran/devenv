@@ -6,6 +6,34 @@ import { execSync } from "node:child_process";
 import type { SystemConfig } from "./config.js";
 import { log } from "./logger.js";
 
+function detectPackageManager(): { install: string; name: string } {
+  if (commandExists("apt-get")) {
+    return { install: "apt-get update -qq && apt-get install -y --no-install-recommends", name: "apt" };
+  }
+  if (commandExists("yum")) {
+    return { install: "yum install -y", name: "yum" };
+  }
+  if (commandExists("dnf")) {
+    return { install: "dnf install -y", name: "dnf" };
+  }
+  if (commandExists("brew")) {
+    return { install: "brew install", name: "brew" };
+  }
+  if (commandExists("apk")) {
+    return { install: "apk add --no-cache", name: "apk" };
+  }
+  throw new Error("No supported package manager found (apt, yum, dnf, brew, apk)");
+}
+
+function commandExists(cmd: string): boolean {
+  try {
+    execSync(`which ${cmd}`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const RUNTIME_INSTALLERS: Record<string, (version: string) => string> = {
   java: (v) => [
     `curl -s "https://get.sdkman.io" | bash`,
@@ -24,8 +52,9 @@ export async function setupSystem(config: SystemConfig): Promise<void> {
   // Install system packages
   if (config.packages && config.packages.length > 0) {
     log.step(`Installing packages: ${config.packages.join(", ")}`);
+    const pm = detectPackageManager();
     try {
-      execSync(`apt-get update -qq && apt-get install -y --no-install-recommends ${config.packages.join(" ")}`, {
+      execSync(`${pm.install} ${config.packages.join(" ")}`, {
         stdio: "inherit",
         timeout: 300_000,
       });

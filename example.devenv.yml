@@ -1,5 +1,8 @@
 name: new-wave
 
+system:
+  packages: [make]
+
 repos:
   core-infra:
     url: https://github.com/xhoantran/new-wave-core-infra
