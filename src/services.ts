@@ -7,18 +7,22 @@ import type { ServiceConfig, DockerServiceConfig, SupabaseServiceConfig } from "
 import { isSupabaseService, isDockerService, resolveVars } from "./config.js";
 import { log } from "./logger.js";
 
-/** Outputs from services (e.g., supabase.url, supabase.anon_key) */
 export type ServiceOutputs = Record<string, Record<string, string>>;
+
+export interface ServiceContext {
+  repoPaths: Record<string, string>;
+  serviceOutputs: ServiceOutputs;
+}
 
 export async function startServices(
   services: Record<string, ServiceConfig>,
-  serviceOutputs: ServiceOutputs
+  ctx: ServiceContext
 ): Promise<void> {
   for (const [name, svc] of Object.entries(services)) {
     if (isSupabaseService(svc)) {
-      await startSupabase(name, svc, serviceOutputs);
+      await startSupabase(name, svc, ctx);
     } else if (isDockerService(svc)) {
-      await startDockerService(name, svc, serviceOutputs);
+      await startDockerService(name, svc, ctx);
     } else {
       log.warn(`Unknown service type for '${name}' — skipping`);
     }
@@ -28,11 +32,10 @@ export async function startServices(
 async function startDockerService(
   name: string,
   svc: DockerServiceConfig,
-  serviceOutputs: ServiceOutputs
+  ctx: ServiceContext
 ): Promise<void> {
   log.step(`Starting service: ${name} (${svc.image})`);
 
-  // Build docker run command
   const ports = (svc.ports ?? [])
     .map((p) => {
       const ps = String(p);
@@ -41,12 +44,11 @@ async function startDockerService(
     .join(" ");
 
   const envFlags = Object.entries(svc.env ?? {})
-    .map(([k, v]) => `-e ${k}=${resolveVars(v, serviceOutputs)}`)
+    .map(([k, v]) => `-e ${k}=${resolveVars(v, ctx)}`)
     .join(" ");
 
   const volumeFlags = (svc.volumes ?? []).map((v) => `-v ${v}`).join(" ");
 
-  // Stop existing container with same name (idempotent)
   try {
     execSync(`docker rm -f ${name} 2>/dev/null`, { stdio: "ignore" });
   } catch { /* ignore */ }
@@ -60,16 +62,12 @@ async function startDockerService(
     throw err;
   }
 
-  // Health check
   if (svc.ready) {
     log.step(`${name}: waiting for health check...`);
-    const maxRetries = 30;
-    for (let i = 0; i < maxRetries; i++) {
+    for (let i = 0; i < 30; i++) {
       try {
         execSync(`docker exec ${name} ${svc.ready}`, { timeout: 5000, stdio: "ignore" });
         log.success(`${name}: healthy`);
-
-        // Store service outputs (port mappings)
         const outputs: Record<string, string> = {};
         for (const p of svc.ports ?? []) {
           const ps = String(p);
@@ -77,55 +75,50 @@ async function startDockerService(
           outputs.port = port;
           outputs.url = `localhost:${port}`;
         }
-        serviceOutputs[name] = outputs;
+        ctx.serviceOutputs[name] = outputs;
         return;
       } catch {
         await sleep(1000);
       }
     }
-    log.warn(`${name}: health check timed out after ${maxRetries}s`);
+    log.warn(`${name}: health check timed out`);
   }
 }
 
 async function startSupabase(
   name: string,
   svc: SupabaseServiceConfig,
-  serviceOutputs: ServiceOutputs
+  ctx: ServiceContext
 ): Promise<void> {
-  log.step(`Starting Supabase (config: ${svc.config})`);
+  // Resolve the config path (may contain ${repos.name} references)
+  const configPath = resolveVars(svc.config, ctx);
+  log.step(`Starting Supabase (config: ${configPath})`);
 
   try {
-    const output = execSync(`cd ${svc.config} && npx supabase start`, {
-      timeout: 300_000, // 5 min — supabase start can be slow
+    const output = execSync(`cd ${configPath} && npx supabase start`, {
+      timeout: 300_000,
       encoding: "utf-8",
     });
 
-    // Parse supabase start output for connection info
     const outputs: Record<string, string> = {};
-
     const urlMatch = output.match(/API URL:\s*(http\S+)/);
     if (urlMatch) outputs.url = urlMatch[1];
-
     const anonMatch = output.match(/anon key:\s*(\S+)/);
     if (anonMatch) outputs.anon_key = anonMatch[1];
-
     const serviceRoleMatch = output.match(/service_role key:\s*(\S+)/);
     if (serviceRoleMatch) outputs.service_role_key = serviceRoleMatch[1];
-
     const dbUrlMatch = output.match(/DB URL:\s*(\S+)/);
     if (dbUrlMatch) outputs.db_url = dbUrlMatch[1];
-
     const studioMatch = output.match(/Studio URL:\s*(http\S+)/);
     if (studioMatch) outputs.studio_url = studioMatch[1];
 
-    serviceOutputs[name] = outputs;
+    ctx.serviceOutputs[name] = outputs;
 
     log.success(`Supabase started`);
-    if (outputs.url) log.info(`  API URL: ${outputs.url}`);
-    if (outputs.studio_url) log.info(`  Studio: ${outputs.studio_url}`);
-    if (outputs.db_url) log.info(`  DB URL: ${outputs.db_url}`);
+    if (outputs.url) log.info(`  API: ${outputs.url}`);
+    if (outputs.db_url) log.info(`  DB: ${outputs.db_url}`);
   } catch (err) {
-    log.error(`Supabase failed to start: ${err instanceof Error ? err.message : err}`);
+    log.error(`Supabase failed: ${err instanceof Error ? err.message : err}`);
     throw err;
   }
 }
@@ -134,7 +127,8 @@ export async function stopServices(services: Record<string, ServiceConfig>): Pro
   for (const [name, svc] of Object.entries(services)) {
     if (isSupabaseService(svc)) {
       try {
-        execSync(`cd ${svc.config} && npx supabase stop`, { timeout: 30_000, stdio: "ignore" });
+        const configPath = svc.config;
+        execSync(`cd ${configPath} && npx supabase stop`, { timeout: 30_000, stdio: "ignore" });
         log.info(`Supabase stopped`);
       } catch { /* ignore */ }
     } else if (isDockerService(svc)) {

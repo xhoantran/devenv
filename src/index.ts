@@ -3,22 +3,21 @@
  * Public API for programmatic use.
  */
 
-import { resolve } from "node:path";
-import { parseConfig, parseConfigFromString, type DevEnvConfig } from "./config.js";
+import { execSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { parseConfig, parseConfigFromString, type DevEnvConfig, type RepoConfig } from "./config.js";
 import { setupSystem } from "./system.js";
-import { startServices, stopServices, type ServiceOutputs } from "./services.js";
-import { cloneProject, setupProject, runProject, stopProjects, sortByDependencies } from "./projects.js";
+import { startServices, stopServices, type ServiceOutputs, type ServiceContext } from "./services.js";
+import { setupProject, runProject, stopProjects, sortByDependencies } from "./projects.js";
 import { log } from "./logger.js";
 
 export { parseConfig, parseConfigFromString, type DevEnvConfig } from "./config.js";
 export { log } from "./logger.js";
 
 export interface DevEnvOptions {
-  /** Working directory for cloned repos. Defaults to current dir. */
   workDir?: string;
-  /** GitHub token for private repos. */
   githubToken?: string;
-  /** Skip system setup (packages/runtimes). */
   skipSystem?: boolean;
 }
 
@@ -28,12 +27,11 @@ export class DevEnv {
   private githubToken?: string;
   private skipSystem: boolean;
   private serviceOutputs: ServiceOutputs = {};
-  private projectDirs: Record<string, string> = {};
+  private repoPaths: Record<string, string> = {};
 
   constructor(configOrPath: string | DevEnvConfig, options?: DevEnvOptions) {
     if (typeof configOrPath === "string") {
-      // Check if it's YAML content or a file path
-      if (configOrPath.includes("\n") || configOrPath.includes("projects:")) {
+      if (configOrPath.includes("\n") || configOrPath.includes("repos:")) {
         this.config = parseConfigFromString(configOrPath);
       } else {
         this.config = parseConfig(configOrPath);
@@ -47,15 +45,15 @@ export class DevEnv {
     this.skipSystem = options?.skipSystem ?? false;
   }
 
-  /** Full setup: system → services → clone → build → run */
+  /** Full setup: system → repos → services → build → run */
   async up(): Promise<void> {
     log.header(`🚀 devenv up: ${this.config.name}`);
 
-    if (!this.skipSystem) {
+    if (!this.skipSystem && this.config.system) {
       await this.system();
     }
+    await this.cloneRepos();
     await this.services();
-    await this.clone();
     await this.build();
     await this.start();
 
@@ -71,50 +69,76 @@ export class DevEnv {
     }
   }
 
+  /** Clone all repos defined in the repos section */
+  async cloneRepos(): Promise<void> {
+    log.header("📥 Cloning repos");
+    for (const [name, repo] of Object.entries(this.config.repos)) {
+      const targetDir = join(this.workDir, name);
+
+      if (existsSync(targetDir)) {
+        log.info(`${name}: already exists at ${targetDir}`);
+        this.repoPaths[name] = targetDir;
+        continue;
+      }
+
+      log.step(`${name}: cloning ${repo.url}`);
+      let repoUrl = repo.url;
+      if (this.githubToken && repoUrl.startsWith("https://github.com/")) {
+        repoUrl = repoUrl.replace("https://github.com/", `https://x-access-token:${this.githubToken}@github.com/`);
+      }
+
+      const branch = repo.branch ?? "main";
+      execSync(`git clone --depth 1 --branch ${branch} ${repoUrl} ${targetDir}`, {
+        timeout: 300_000,
+        stdio: "pipe",
+      });
+      log.success(`${name}: cloned`);
+      this.repoPaths[name] = targetDir;
+    }
+  }
+
   /** Start all services */
   async services(): Promise<void> {
     if (this.config.services && Object.keys(this.config.services).length > 0) {
       log.header("🐳 Starting services");
-      await startServices(this.config.services, this.serviceOutputs);
+      const ctx: ServiceContext = {
+        repoPaths: this.repoPaths,
+        serviceOutputs: this.serviceOutputs,
+      };
+      await startServices(this.config.services, ctx);
     }
   }
 
-  /** Clone all project repos */
-  async clone(): Promise<void> {
-    log.header("📥 Cloning projects");
-    for (const [name, proj] of Object.entries(this.config.projects)) {
-      const dir = await cloneProject(name, proj, this.workDir, this.githubToken);
-      this.projectDirs[name] = dir;
-    }
-  }
-
-  /** Run setup commands for all projects (in dependency order) */
+  /** Run setup commands for all projects */
   async build(): Promise<void> {
     log.header("🔨 Building projects");
+    const ctx: ServiceContext = { repoPaths: this.repoPaths, serviceOutputs: this.serviceOutputs };
     const sorted = sortByDependencies(this.config.projects, this.config.services ?? {});
     for (const [name, proj] of sorted) {
-      const dir = this.projectDirs[name];
-      if (dir) {
-        await setupProject(name, proj, dir, this.serviceOutputs);
+      const dir = this.repoPaths[proj.repo];
+      if (!dir) {
+        log.warn(`${name}: repo '${proj.repo}' not found in repos section — skipping`);
+        continue;
       }
+      await setupProject(name, proj, dir, ctx);
     }
   }
 
-  /** Start all projects (in dependency order) */
+  /** Start all projects */
   async start(): Promise<void> {
-    log.header("▶️ Starting projects");
+    log.header("▶️  Starting projects");
+    const ctx: ServiceContext = { repoPaths: this.repoPaths, serviceOutputs: this.serviceOutputs };
     const sorted = sortByDependencies(this.config.projects, this.config.services ?? {});
     for (const [name, proj] of sorted) {
-      const dir = this.projectDirs[name];
-      if (dir) {
-        await runProject(name, proj, dir, this.serviceOutputs);
-      }
+      const dir = this.repoPaths[proj.repo];
+      if (!dir) continue;
+      await runProject(name, proj, dir, ctx);
     }
   }
 
   /** Stop everything */
   async down(): Promise<void> {
-    log.header("⏹ Stopping everything");
+    log.header("⏹  Stopping everything");
     stopProjects();
     if (this.config.services) {
       await stopServices(this.config.services);
@@ -122,7 +146,7 @@ export class DevEnv {
     log.success("All stopped");
   }
 
-  /** Print current status */
+  /** Print status */
   printStatus(): void {
     log.header("📊 Status");
     for (const [name, outputs] of Object.entries(this.serviceOutputs)) {
@@ -134,13 +158,6 @@ export class DevEnv {
     }
   }
 
-  /** Get resolved service outputs (URLs, keys, etc.) */
-  getServiceOutputs(): ServiceOutputs {
-    return this.serviceOutputs;
-  }
-
-  /** Get project directories */
-  getProjectDirs(): Record<string, string> {
-    return this.projectDirs;
-  }
+  getServiceOutputs(): ServiceOutputs { return this.serviceOutputs; }
+  getRepoPaths(): Record<string, string> { return this.repoPaths; }
 }

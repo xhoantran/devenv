@@ -7,9 +7,14 @@ import yaml from "js-yaml";
 
 // ─── Types ──────────────────────────────────────────────────
 
+export interface RepoConfig {
+  url: string;
+  branch?: string;
+}
+
 export interface SystemConfig {
   packages?: string[];
-  runtimes?: Record<string, string | number>; // e.g., { java: 25, node: 22 }
+  runtimes?: Record<string, string | number>;
 }
 
 export interface DockerServiceConfig {
@@ -17,23 +22,21 @@ export interface DockerServiceConfig {
   ports?: (number | string)[];
   env?: Record<string, string>;
   volumes?: string[];
-  ready?: string; // health check command
+  ready?: string;
 }
 
 export interface SupabaseServiceConfig {
   type: "supabase";
-  config: string; // path to supabase config dir
+  config: string; // path — can use ${repos.name} references
 }
 
 export type ServiceConfig = DockerServiceConfig | SupabaseServiceConfig;
 
 export interface ProjectConfig {
-  repo: string;
-  branch?: string;
-  path?: string; // resolved at runtime (clone dir)
-  runtime: string; // java, node, python, go, rust, docker
+  repo: string; // references a key in repos section
+  runtime: string;
   setup?: string;
-  run?: string; // "skip" to skip
+  run?: string;
   port?: number;
   depends_on?: string[];
   env?: Record<string, string>;
@@ -42,6 +45,7 @@ export interface ProjectConfig {
 
 export interface DevEnvConfig {
   name: string;
+  repos: Record<string, RepoConfig>;
   system?: SystemConfig;
   services?: Record<string, ServiceConfig>;
   projects: Record<string, ProjectConfig>;
@@ -71,12 +75,17 @@ export function parseConfigFromString(content: string): DevEnvConfig {
     throw new Error("Invalid devenv.yml: must be a YAML object");
   }
 
+  if (!raw.repos || typeof raw.repos !== "object") {
+    throw new Error("Invalid devenv.yml: 'repos' section is required");
+  }
+
   if (!raw.projects || typeof raw.projects !== "object") {
     throw new Error("Invalid devenv.yml: 'projects' section is required");
   }
 
   return {
     name: (raw.name as string) ?? "devenv",
+    repos: raw.repos as Record<string, RepoConfig>,
     system: raw.system as SystemConfig | undefined,
     services: raw.services as Record<string, ServiceConfig> | undefined,
     projects: raw.projects as Record<string, ProjectConfig>,
@@ -88,20 +97,26 @@ export function parseConfigFromString(content: string): DevEnvConfig {
 /**
  * Resolve ${VAR} references in a string.
  * Supports:
- *   ${ENV_VAR}          — from process.env
- *   ${service.key}      — from resolved service outputs
+ *   ${ENV_VAR}              — from process.env
+ *   ${repos.name}           — resolved repo clone path
+ *   ${service.key}          — from resolved service outputs
  */
 export function resolveVars(
   value: string,
-  serviceOutputs: Record<string, Record<string, string>>
+  context: {
+    repoPaths?: Record<string, string>;
+    serviceOutputs?: Record<string, Record<string, string>>;
+  }
 ): string {
   return value.replace(/\$\{([^}]+)\}/g, (_, ref: string) => {
-    // Check if it's a service reference: ${supabase.url}
+    if (ref.startsWith("repos.")) {
+      const repoName = ref.slice(6);
+      return context.repoPaths?.[repoName] ?? "";
+    }
     if (ref.includes(".")) {
       const [svcName, key] = ref.split(".", 2);
-      return serviceOutputs[svcName]?.[key] ?? "";
+      return context.serviceOutputs?.[svcName]?.[key] ?? "";
     }
-    // Otherwise, env var
     return process.env[ref] ?? "";
   });
 }
@@ -111,12 +126,15 @@ export function resolveVars(
  */
 export function resolveEnvMap(
   env: Record<string, string> | undefined,
-  serviceOutputs: Record<string, Record<string, string>>
+  context: {
+    repoPaths?: Record<string, string>;
+    serviceOutputs?: Record<string, Record<string, string>>;
+  }
 ): Record<string, string> {
   if (!env) return {};
   const resolved: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    resolved[key] = resolveVars(value, serviceOutputs);
+    resolved[key] = resolveVars(value, context);
   }
   return resolved;
 }
