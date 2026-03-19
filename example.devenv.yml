@@ -1,0 +1,66 @@
+name: new-wave
+
+system:
+  packages: [gcc, ffmpeg, make, curl, jq]
+  runtimes:
+    java: 25
+    node: 22
+    python: 3.12
+
+services:
+  supabase:
+    type: supabase
+    config: ./new-wave-core-infra/supabase
+
+  redis:
+    image: redis:7
+    ports: [6379]
+    ready: redis-cli ping
+
+  localstack:
+    image: localstack/localstack-pro
+    ports: [4566]
+    env:
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN}
+
+projects:
+  core-infra:
+    repo: https://github.com/xhoantran/new-wave-core-infra
+    branch: main
+    runtime: node
+    setup: make all
+    run: skip
+    depends_on: [supabase, localstack]
+
+  api:
+    repo: https://github.com/xhoantran/new-wave-api
+    branch: main
+    runtime: java
+    setup: ./mvnw clean package -DskipTests
+    run: ./mvnw spring-boot:run
+    port: 8080
+    depends_on: [supabase, redis, localstack]
+    env:
+      SUPABASE_URL: ${supabase.url}
+      SUPABASE_ANON_KEY: ${supabase.anon_key}
+      SPRING_DATASOURCE_URL: ${supabase.db_url}
+
+  ui:
+    repo: https://github.com/xhoantran/new-wave-ui
+    branch: main
+    runtime: node
+    setup: npm install --include=dev
+    run: npm run dev
+    port: 5173
+    depends_on: [api]
+    env:
+      VITE_API_URL: http://localhost:8080
+      VITE_SUPABASE_URL: ${supabase.url}
+      VITE_SUPABASE_ANON_KEY: ${supabase.anon_key}
+
+  video-matcher:
+    repo: https://github.com/xhoantran/new-wave-video-matcher
+    branch: main
+    runtime: python
+    setup: pip install -r requirements.txt
+    run: skip
