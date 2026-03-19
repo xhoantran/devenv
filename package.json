@@ -1,5 +1,5 @@
 {
-  "name": "@newwave/devenv",
+  "name": "@new-wave/devenv",
   "version": "0.1.0",
   "description": "Dev environment framework — bare metal to running workspace",
   "type": "module",
