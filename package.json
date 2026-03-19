@@ -22,6 +22,10 @@
     "js-yaml": "^4.1.1",
     "ora": "^8.2.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xhoantran/devenv"
+  },
   "devDependencies": {
     "@types/dockerode": "^3.3.38",
     "@types/js-yaml": "^4.0.9",
