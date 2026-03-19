@@ -5,12 +5,16 @@
 
 import { Command } from "commander";
 import { DevEnv } from "./index.js";
-import { log } from "./logger.js";
+import { log, setLogLevel } from "./logger.js";
 
 const program = new Command()
   .name("devenv")
   .description("Dev environment framework — bare metal to running workspace")
-  .version("0.1.0");
+  .version("0.1.0")
+  .option("-v, --verbose", "Show detailed output (debug mode)")
+  .hook("preAction", () => {
+    if (program.opts().verbose) setLogLevel("debug");
+  });
 
 program
   .command("up")
