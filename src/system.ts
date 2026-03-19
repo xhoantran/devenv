@@ -7,22 +7,28 @@ import type { SystemConfig } from "./config.js";
 import { log } from "./logger.js";
 
 function detectPackageManager(): { install: string; name: string } {
+  const sudo = canSudo() ? "sudo " : "";
   if (commandExists("apt-get")) {
-    return { install: "apt-get update -qq && apt-get install -y --no-install-recommends", name: "apt" };
+    return { install: `${sudo}apt-get update -qq && ${sudo}apt-get install -y --no-install-recommends`, name: "apt" };
   }
   if (commandExists("yum")) {
-    return { install: "yum install -y", name: "yum" };
+    return { install: `${sudo}yum install -y`, name: "yum" };
   }
   if (commandExists("dnf")) {
-    return { install: "dnf install -y", name: "dnf" };
+    return { install: `${sudo}dnf install -y`, name: "dnf" };
   }
   if (commandExists("brew")) {
     return { install: "brew install", name: "brew" };
   }
   if (commandExists("apk")) {
-    return { install: "apk add --no-cache", name: "apk" };
+    return { install: `${sudo}apk add --no-cache`, name: "apk" };
   }
   throw new Error("No supported package manager found (apt, yum, dnf, brew, apk)");
+}
+
+function canSudo(): boolean {
+  if (process.getuid?.() === 0) return false; // already root
+  return commandExists("sudo");
 }
 
 function commandExists(cmd: string): boolean {
