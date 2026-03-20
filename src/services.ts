@@ -95,8 +95,9 @@ async function startSupabase(
   log.step(`Starting Supabase (config: ${configPath})`);
 
   try {
-    const output = execSync(`cd ${configPath} && npx supabase start`, {
-      timeout: 300_000,
+    // Suppress Docker pull noise (stderr) — only capture stdout for connection info
+    const output = execSync(`cd ${configPath} && npx supabase start 2>/dev/null`, {
+      timeout: 600_000, // 10 min — first pull is slow
       encoding: "utf-8",
     });
 
