@@ -1,6 +1,6 @@
 {
   "name": "@new-wave/devenv",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Dev environment framework — bare metal to running workspace",
   "type": "module",
   "bin": {
