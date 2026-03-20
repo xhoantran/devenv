@@ -16,22 +16,24 @@ const runningProcesses: Map<string, ChildProcess> = new Map();
 
 function buildCommand(runtime: string, cmd: string, projectDir: string): string {
   const rt = runtime.toLowerCase();
+  // Resolve cache dir relative to workDir (parent of projectDir) for persistence
+  const cacheBase = join(projectDir, "..");
 
   if (rt === "node" || rt.startsWith("node:")) return cmd;
 
   if (rt === "java" || rt.startsWith("java:")) {
     const version = rt.includes(":") ? rt.split(":")[1] : "25";
-    return `docker run --rm --network host -v ${projectDir}:/app -w /app maven:3.9-amazoncorretto-${version} ${cmd}`;
+    return `docker run --rm --network host -v ${projectDir}:/app -v ${cacheBase}/.m2:/root/.m2 -w /app maven:3.9-amazoncorretto-${version} ${cmd}`;
   }
 
   if (rt === "python" || rt.startsWith("python:")) {
     const version = rt.includes(":") ? rt.split(":")[1] : "3.12";
-    return `docker run --rm --network host -v ${projectDir}:/app -w /app python:${version} ${cmd}`;
+    return `docker run --rm --network host -v ${projectDir}:/app -v ${cacheBase}/.pip-cache:/root/.cache/pip -w /app python:${version} ${cmd}`;
   }
 
   if (rt === "go" || rt.startsWith("go:")) {
     const version = rt.includes(":") ? rt.split(":")[1] : "1.23";
-    return `docker run --rm --network host -v ${projectDir}:/app -w /app golang:${version} ${cmd}`;
+    return `docker run --rm --network host -v ${projectDir}:/app -v ${cacheBase}/.go-cache:/go/pkg -w /app golang:${version} ${cmd}`;
   }
 
   return cmd;
