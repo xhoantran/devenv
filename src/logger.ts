@@ -12,6 +12,10 @@ export function setLogLevel(l: LogLevel) {
   level = l;
 }
 
+export function getLogLevel(): LogLevel {
+  return level;
+}
+
 export const log = {
   // Always shown
   header: (msg: string) => console.log("\n" + chalk.bold.white(msg)),

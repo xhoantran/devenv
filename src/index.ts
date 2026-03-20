@@ -76,7 +76,19 @@ export class DevEnv {
       const targetDir = join(this.workDir, name);
 
       if (existsSync(targetDir)) {
-        log.info(`${name}: already exists at ${targetDir}`);
+        log.step(`${name}: pulling latest`);
+        let pullUrl = repo.url;
+        if (this.githubToken && pullUrl.startsWith("https://github.com/")) {
+          pullUrl = pullUrl.replace("https://github.com/", `https://x-access-token:${this.githubToken}@github.com/`);
+          try { execSync(`git remote set-url origin ${pullUrl}`, { cwd: targetDir, stdio: "pipe" }); } catch { /* ignore */ }
+        }
+        const pullBranch = repo.branch ?? "main";
+        try {
+          execSync(`git checkout ${pullBranch} && git pull origin ${pullBranch}`, { cwd: targetDir, timeout: 120_000, stdio: "pipe" });
+          log.success(`${name}: up to date`);
+        } catch {
+          log.warn(`${name}: pull failed — using existing`);
+        }
         this.repoPaths[name] = targetDir;
         continue;
       }

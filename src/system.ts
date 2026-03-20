@@ -4,7 +4,7 @@
 
 import { execSync } from "node:child_process";
 import type { SystemConfig } from "./config.js";
-import { log } from "./logger.js";
+import { getLogLevel, log } from "./logger.js";
 
 function detectPackageManager(): { install: string; name: string } {
   const sudo = canSudo() ? "sudo " : "";
@@ -59,13 +59,17 @@ export async function setupSystem(config: SystemConfig): Promise<void> {
   if (config.packages && config.packages.length > 0) {
     log.step(`Installing packages: ${config.packages.join(", ")}`);
     const pm = detectPackageManager();
+    const verbose = getLogLevel() === "debug";
     try {
-      execSync(`${pm.install} ${config.packages.join(" ")}`, {
-        stdio: "inherit",
+      const result = execSync(`${pm.install} ${config.packages.join(" ")}`, {
+        stdio: verbose ? "inherit" : "pipe",
         timeout: 300_000,
       });
+      if (!verbose && result) log.debug(result.toString());
       log.success("Packages installed");
-    } catch (err) {
+    } catch (err: any) {
+      if (!verbose && err.stdout) log.error(err.stdout.toString());
+      if (!verbose && err.stderr) log.error(err.stderr.toString());
       log.error(`Package installation failed: ${err instanceof Error ? err.message : err}`);
       throw err;
     }
@@ -83,14 +87,18 @@ export async function setupSystem(config: SystemConfig): Promise<void> {
       }
 
       log.step(`Installing ${runtime} ${vStr}`);
+      const verbose = getLogLevel() === "debug";
       try {
-        execSync(installer(vStr), {
-          stdio: "inherit",
+        const result = execSync(installer(vStr), {
+          stdio: verbose ? "inherit" : "pipe",
           timeout: 600_000,
           shell: "/bin/bash",
         });
+        if (!verbose && result) log.debug(result.toString());
         log.success(`${runtime} ${vStr} installed`);
-      } catch (err) {
+      } catch (err: any) {
+        if (!verbose && err.stdout) log.error(err.stdout.toString());
+        if (!verbose && err.stderr) log.error(err.stderr.toString());
         log.error(`Failed to install ${runtime} ${vStr}: ${err instanceof Error ? err.message : err}`);
         throw err;
       }

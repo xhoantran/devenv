@@ -36,6 +36,23 @@ async function startDockerService(
 ): Promise<void> {
   log.step(`Starting service: ${name} (${svc.image})`);
 
+  // Check if container is already running — skip if so
+  try {
+    const state = execSync(`docker inspect -f '{{.State.Running}}' ${name} 2>/dev/null`, { encoding: "utf-8" }).trim();
+    if (state === "true") {
+      log.success(`${name}: already running — skipping`);
+      const outputs: Record<string, string> = {};
+      for (const p of svc.ports ?? []) {
+        const ps = String(p);
+        const port = ps.includes(":") ? ps.split(":")[0] : ps;
+        outputs.port = port;
+        outputs.url = `localhost:${port}`;
+      }
+      ctx.serviceOutputs[name] = outputs;
+      return;
+    }
+  } catch { /* container doesn't exist, proceed normally */ }
+
   const ports = (svc.ports ?? [])
     .map((p) => {
       const ps = String(p);
@@ -93,6 +110,33 @@ async function startSupabase(
   // Resolve the config path (may contain ${repos.name} references)
   const configPath = resolveVars(svc.config, ctx);
   log.step(`Starting Supabase (config: ${configPath})`);
+
+  // Check if Supabase is already running — skip if so
+  try {
+    const status = execSync(`cd ${configPath} && npx supabase status`, {
+      encoding: "utf-8",
+      timeout: 15_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (status.includes("API URL:")) {
+      log.success("Supabase: already running — skipping start");
+      const outputs: Record<string, string> = {};
+      const urlMatch = status.match(/API URL:\s*(http\S+)/);
+      if (urlMatch) outputs.url = urlMatch[1];
+      const anonMatch = status.match(/anon key:\s*(\S+)/);
+      if (anonMatch) outputs.anon_key = anonMatch[1];
+      const serviceRoleMatch = status.match(/service_role key:\s*(\S+)/);
+      if (serviceRoleMatch) outputs.service_role_key = serviceRoleMatch[1];
+      const dbUrlMatch = status.match(/DB URL:\s*(\S+)/);
+      if (dbUrlMatch) outputs.db_url = dbUrlMatch[1];
+      const studioMatch = status.match(/Studio URL:\s*(http\S+)/);
+      if (studioMatch) outputs.studio_url = studioMatch[1];
+      ctx.serviceOutputs[name] = outputs;
+      if (outputs.url) log.info(`  API: ${outputs.url}`);
+      if (outputs.db_url) log.info(`  DB: ${outputs.db_url}`);
+      return;
+    }
+  } catch { /* not running, proceed with start */ }
 
   try {
     let output: string;
