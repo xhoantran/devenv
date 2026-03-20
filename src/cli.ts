@@ -3,14 +3,20 @@
  * devenv CLI — bring up dev environments from a devenv.yml config.
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { DevEnv } from "./index.js";
 import { log, setLogLevel } from "./logger.js";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf-8"));
+
 const program = new Command()
   .name("devenv")
   .description("Dev environment framework — bare metal to running workspace")
-  .version("0.1.0")
+  .version(pkg.version)
   .option("-v, --verbose", "Show detailed output (debug mode)")
   .hook("preAction", () => {
     if (program.opts().verbose) setLogLevel("debug");

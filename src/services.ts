@@ -95,11 +95,23 @@ async function startSupabase(
   log.step(`Starting Supabase (config: ${configPath})`);
 
   try {
-    // Suppress Docker pull noise (stderr) — only capture stdout for connection info
-    const output = execSync(`cd ${configPath} && npx supabase start 2>/dev/null`, {
-      timeout: 600_000, // 10 min — first pull is slow
-      encoding: "utf-8",
-    });
+    let output: string;
+    try {
+      output = execSync(`cd ${configPath} && npx supabase start`, {
+        timeout: 600_000, // 10 min — first pull is slow
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      // On failure, show the actual error (not Docker pull noise)
+      const e = err as { stderr?: string; stdout?: string; message?: string };
+      const stderr = (e.stderr ?? "").split("\n")
+        .filter((l: string) => !l.match(/^[a-f0-9]{12}\s+(Pulling|Waiting|Downloading|Extracting|Verifying|Pull complete|Already exists|Digest|Status)/))
+        .filter((l: string) => l.trim())
+        .join("\n");
+      log.error(`Supabase failed: ${stderr || e.message || "unknown error"}`);
+      throw new Error(`Supabase start failed: ${stderr || e.message}`);
+    }
 
     const outputs: Record<string, string> = {};
     const urlMatch = output.match(/API URL:\s*(http\S+)/);
